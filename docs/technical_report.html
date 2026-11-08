@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Technical report</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <style>@page {size:A4;margin:16mm 17mm}
+body{font:10pt/1.4 "DejaVu Sans",sans-serif;color:#162733;max-width:100%;margin:0}
+h1{font-size:21pt;line-height:1.15;color:#12465a}h2{font-size:14pt;color:#12465a;break-after:avoid}table{border-collapse:collapse;width:100%;font-size:9pt;break-inside:avoid}th,td{padding:4px 6px;border-bottom:1px solid #bbcbd0}th{background:#e4eff2}p{orphans:3;widows:3}a{color:#176679}
+</style>
+</head>
+<body>
+<h1
+id="ternary-ecg-inference-on-a-desktop-and-an-emulated-stm32">Ternary
+ECG inference on a desktop and an emulated STM32</h1>
+<p><strong>Muhammad Afnan · Software-only implementation · Audited
+OptiPlex run</strong></p>
+<h2 id="research-question-and-result">Research question and result</h2>
+<p>Can a small ECG classifier store its learned weights as three symbols
+and still execute correctly on a microcontroller instruction set? The
+trained network stored 728 ternary weights in 147 bytes using five-trit
+packing. Its integer C implementation classified 18,823 held-out beats
+with 92.05% accuracy. The FP32 baseline achieved 96.95%. A post-training
+INT8 baseline achieved 95.86% and the lowest measured desktop median
+latency, 39.18 microseconds. Two packed ARM builds reproduced desktop
+integer results on five emulator vectors each.</p>
+<p>The experiment adapts ternary-weight ideas to a two-class 1D CNN. The
+task starts at a database-supplied beat location. Beat detection,
+clinical validation, physical deployment, energy consumption and
+on-board timing are outside the measured scope.</p>
+<h2 id="data-and-experimental-design">Data and experimental design</h2>
+<p>MIT-BIH Arrhythmia Database v1.0.0 provides the ECG waveforms and
+expert annotations. We used the MLII lead at 360 Hz and kept normal
+beats (N) and premature ventricular contractions (V). Each input
+contains 180 samples in millivolts, starting 90 samples before the
+annotation. Incomplete windows and other annotation types were excluded.
+The project used 44 records from 43 patients. The fixed patient-wise
+split kept records 201 and 202 together.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Split</th>
+<th style="text-align: right;">Patients</th>
+<th style="text-align: right;">N</th>
+<th style="text-align: right;">V</th>
+<th style="text-align: right;">Beats</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Training</td>
+<td style="text-align: right;">27</td>
+<td style="text-align: right;">44,636</td>
+<td style="text-align: right;">3,175</td>
+<td style="text-align: right;">47,811</td>
+</tr>
+<tr class="even">
+<td>Validation</td>
+<td style="text-align: right;">7</td>
+<td style="text-align: right;">13,433</td>
+<td style="text-align: right;">1,362</td>
+<td style="text-align: right;">14,795</td>
+</tr>
+<tr class="odd">
+<td>Test</td>
+<td style="text-align: right;">9</td>
+<td style="text-align: right;">16,458</td>
+<td style="text-align: right;">2,365</td>
+<td style="text-align: right;">18,823</td>
+</tr>
+</tbody>
+</table>
+<p>Training windows determined the normalization mean and population
+standard deviation. Both models used the same initial underlying
+weights, training order, seed 42, batch size 128, Adam learning rate
+0.001 and 20 epochs. Inverse-frequency loss weights addressed training
+imbalance. The earliest epoch attaining the highest validation macro-F1
+supplied each model’s final checkpoint. Precision, recall, F1, confusion
+matrices and epoch histories are in results/phase5/report.json.</p>
+<h2 id="network-and-numerical-representations">Network and numerical
+representations</h2>
+<table>
+<thead>
+<tr class="header">
+<th>Operation</th>
+<th>Output per beat</th>
+<th style="text-align: right;">Parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>MLII input</td>
+<td>1 × 180</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="even">
+<td>Conv1, kernel 7, stride 2, padding 3, then ReLU</td>
+<td>8 × 90</td>
+<td style="text-align: right;">64</td>
+</tr>
+<tr class="odd">
+<td>Max pool, width and stride 2</td>
+<td>8 × 45</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="even">
+<td>Conv2, kernel 5, stride 1, padding 2, then ReLU</td>
+<td>16 × 45</td>
+<td style="text-align: right;">656</td>
+</tr>
+<tr class="odd">
+<td>Global temporal mean and flatten</td>
+<td>16</td>
+<td style="text-align: right;">0</td>
+</tr>
+<tr class="even">
+<td>Linear classifier</td>
+<td>2 logits</td>
+<td style="text-align: right;">34</td>
+</tr>
+</tbody>
+</table>
+<p>For each weight tensor, the forward pass sets the threshold to 0.7
+times the mean absolute latent weight. Values strictly above or below
+the positive or negative threshold receive +1 or −1. Ties and values
+between the thresholds receive zero. The scale is the mean magnitude of
+the selected nonzero weights, or zero when none are selected. It
+minimizes squared reconstruction error for the chosen codes. Multiplying
+each code by its layer scale produces the effective weight. The
+surrogate backward pass propagates the incoming gradient when the latent
+weight has magnitude at most one. Outside this interval its gradient is
+zero.</p>
+<p>All 754 parameters use FP32 in the baseline, for 3,016 bytes. The
+ternary model has 728 weight codes, 26 biases and three scales. Storing
+each code as its value plus one permits four 2-bit digits or five
+base-three digits per byte, least significant digit first. Each layer
+starts on a byte boundary. The two formats use 182 and 147 weight bytes
+respectively. Including biases and scales gives 298 and 263 bytes. At
+this network size the five-trit payload is 11.47 times smaller than the
+FP32 payload. “1.58 bits” refers to log2(3) per ternary symbol; the
+actual five-trit weight payload here uses 1.615 bits per weight
+including padding.</p>
+<h2 id="integer-inference-and-verification">Integer inference and
+verification</h2>
+<p>The standalone C engine reads 180 integer microvolt samples.
+Normalization, signed weight accumulation, bias, ReLU, pooling and the
+two output scores use integer arithmetic. Activations and scores have 12
+fractional bits, scale multipliers use 20, and widened intermediates
+protect scaling operations. Bounds were checked for all signed 32-bit
+input values. Class 0 wins a score tie. The engine uses fixed-size
+working arrays.</p>
+<p>Both packing formats reproduced all trained weight codes. On 46
+selected test beats, both C builds matched the Python integer reference
+exactly at six stages. Across the full test set the two packing formats
+agreed on both scores for every beat. Integer C and the PyTorch ternary
+checkpoint differed on five decisions. Their largest absolute logit
+difference was 0.00502515.</p>
+<table>
+<colgroup>
+<col style="width: 11%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+<col style="width: 14%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Implementation</th>
+<th style="text-align: right;">True N predicted N</th>
+<th style="text-align: right;">True N predicted V</th>
+<th style="text-align: right;">True V predicted N</th>
+<th style="text-align: right;">True V predicted V</th>
+<th style="text-align: right;">Macro-F1</th>
+<th style="text-align: right;">V recall</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>PyTorch FP32</td>
+<td style="text-align: right;">15,960</td>
+<td style="text-align: right;">498</td>
+<td style="text-align: right;">76</td>
+<td style="text-align: right;">2,289</td>
+<td style="text-align: right;">0.9355</td>
+<td style="text-align: right;">0.9679</td>
+</tr>
+<tr class="even">
+<td>PyTorch ternary</td>
+<td style="text-align: right;">15,061</td>
+<td style="text-align: right;">1,397</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">2,265</td>
+<td style="text-align: right;">0.8521</td>
+<td style="text-align: right;">0.9577</td>
+</tr>
+<tr class="odd">
+<td>Integer C ternary</td>
+<td style="text-align: right;">15,062</td>
+<td style="text-align: right;">1,396</td>
+<td style="text-align: right;">100</td>
+<td style="text-align: right;">2,265</td>
+<td style="text-align: right;">0.8522</td>
+<td style="text-align: right;">0.9577</td>
+</tr>
+</tbody>
+</table>
+<p>Relative to FP32, integer ternary inference missed 24 additional V
+beats and classified 898 additional normal beats as V. Most of the
+classification difference appeared during ternary training and weight
+quantization. Converting the trained ternary network to integer C
+changed five decisions and improved the total correct count by one.</p>
+<h2 id="desktop-benchmark-and-emulated-firmware">Desktop benchmark and
+emulated firmware</h2>
+<p>The benchmark pinned execution to one CPU core, used batch size one
+and timed normalization through the class decision after 32 warm-up
+calls. Each implementation processed the same 18,823 test beats in
+record order. The INT8 variant used signed 8-bit weights and activations
+with integer dot products and floating-point rescaling. Its activation
+scales came from training data.</p>
+<table>
+<thead>
+<tr class="header">
+<th>Implementation</th>
+<th style="text-align: right;">Accuracy</th>
+<th style="text-align: right;">Median (µs)</th>
+<th style="text-align: right;">P95 (µs)</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>FP32 PyTorch</td>
+<td style="text-align: right;">96.95%</td>
+<td style="text-align: right;">312.93</td>
+<td style="text-align: right;">384.92</td>
+</tr>
+<tr class="even">
+<td>Conventional INT8 C</td>
+<td style="text-align: right;">95.86%</td>
+<td style="text-align: right;">39.18</td>
+<td style="text-align: right;">44.28</td>
+</tr>
+<tr class="odd">
+<td>Unpacked ternary C</td>
+<td style="text-align: right;">92.05%</td>
+<td style="text-align: right;">64.78</td>
+<td style="text-align: right;">70.87</td>
+</tr>
+<tr class="even">
+<td>2-bit packed C</td>
+<td style="text-align: right;">92.05%</td>
+<td style="text-align: right;">93.71</td>
+<td style="text-align: right;">100.58</td>
+</tr>
+<tr class="odd">
+<td>Five-trit packed C</td>
+<td style="text-align: right;">92.05%</td>
+<td style="text-align: right;">237.94</td>
+<td style="text-align: right;">253.65</td>
+</tr>
+<tr class="even">
+<td>Cached five-trit C</td>
+<td style="text-align: right;">92.05%</td>
+<td style="text-align: right;">67.02</td>
+<td style="text-align: right;">73.02</td>
+</tr>
+</tbody>
+</table>
+<p>Caching required 728 extra RAM bytes and reduced five-trit median
+latency by 71.8%. Among the ternary implementations, unpacked weights
+gave the lowest median latency. The FP32 timing includes PyTorch
+dispatch, so the ratio between FP32 and C combines runtime and
+representation effects. These are single-run desktop measurements. Raw
+timing samples, mean latency, throughput and process RSS are preserved
+in results/phase10/.</p>
+<p>Both STM32F405 Cortex-M4 firmware builds ran in QEMU on the
+netduinoplus2 target. Each reproduced both scores and the class for two
+real validation beats and three synthetic vectors. The complete 2-bit
+image was 5,848 bytes and the five-trit image was 5,884 bytes, including
+the test harness and embedded inputs. The smaller five-trit weight array
+therefore did not yield the smaller complete image. Both ELF files had
+zero linked data/BSS bytes. The linker reserved 8 KiB for stack
+availability; peak stack use was unmeasured.</p>
+<h2 id="audit-and-limits">Audit and limits</h2>
+<p>The Phase 11 audit passed all six groups. It reconciled checkpoint
+identities, patient separation, weights and surrogate gradients,
+arithmetic bounds, all 112,938 timed rows, and both firmware self-tests.
+The release includes the detailed audit findings. The experiment covered
+one dataset, two annotation-defined classes, one training seed and nine
+test patients. Physical-board latency, power, peak stack use and
+variation between benchmark runs remain open measurements.</p>
+<h2 id="sources">Sources</h2>
+<ul>
+<li>Moody and Mark. MIT-BIH Arrhythmia Database v1.0.0. PhysioNet. Data
+licensed under Open Data Commons Attribution v1.0.
+https://doi.org/10.13026/C2F305</li>
+<li>Li et al. Ternary Weight Networks.
+https://arxiv.org/abs/1605.04711</li>
+<li>Ma et al. The Era of 1-bit LLMs.
+https://arxiv.org/abs/2402.17764</li>
+<li>Wang et al. Bitnet.cpp. https://arxiv.org/abs/2502.11880</li>
+<li>QEMU. STMicroelectronics STM32 boards.
+https://www.qemu.org/docs/master/system/arm/stm32.html</li>
+</ul>
+</body>
+</html>
